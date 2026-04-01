@@ -10,6 +10,7 @@ public interface IUserRepository
     Task<User?> GetUserById(int id);
     Task<User?> GetUserByUsername(string username);
     Task<bool> UsernameExists(string username, int? excludeId = null);
+    Task<bool> EmailExists(string emailHash, int? excludeId = null);
     Task<int> CreateUser(User user);
     Task UpdateUser(User user);
     Task DeleteUser(int id);
@@ -23,7 +24,7 @@ public class UserRepository : IUserRepository
 
     private const string BaseQuery = @"
         SELECT u.Id, u.Username, u.EncryptedEmail, u.EncryptedPhone, u.EncryptedPassword,
-               u.[Key], u.RoleId, r.Name AS RoleName, u.IsActive, u.CreatedAt, u.UpdatedAt
+               u.EmailHash, u.[Key], u.RoleId, r.Name AS RoleName, u.IsActive, u.CreatedAt, u.UpdatedAt
         FROM Users u
         INNER JOIN Roles r ON u.RoleId = r.Id";
 
@@ -94,19 +95,33 @@ public class UserRepository : IUserRepository
         return Convert.ToInt32(await command.ExecuteScalarAsync()) > 0;
     }
 
+    public async Task<bool> EmailExists(string emailHash, int? excludeId = null)
+    {
+        using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+        var query = "SELECT COUNT(*) FROM Users WHERE EmailHash = @emailHash";
+        if (excludeId.HasValue) query += " AND Id != @excludeId";
+        using var command = new SqlCommand(query, connection);
+        command.Parameters.AddWithValue("@emailHash", emailHash ?? "" as object);
+        if (excludeId.HasValue)
+            command.Parameters.AddWithValue("@excludeId", excludeId.Value);
+        return Convert.ToInt32(await command.ExecuteScalarAsync()) > 0;
+    }
+
     public async Task<int> CreateUser(User user)
     {
         using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
         var sql = @"
-            INSERT INTO Users (Username, EncryptedEmail, EncryptedPhone, EncryptedPassword, [Key], RoleId, IsActive, CreatedAt, UpdatedAt)
+            INSERT INTO Users (Username, EncryptedEmail, EncryptedPhone, EncryptedPassword, EmailHash, [Key], RoleId, IsActive, CreatedAt, UpdatedAt)
             OUTPUT INSERTED.Id
-            VALUES (@username, @email, @phone, @password, @key, @roleId, 1, @createdAt, @updatedAt)";
+            VALUES (@username, @email, @phone, @password, @emailHash, @key, @roleId, 1, @createdAt, @updatedAt)";
         using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@username", user.Username);
         command.Parameters.AddWithValue("@email", user.EncryptedEmail);
         command.Parameters.AddWithValue("@phone", user.EncryptedPhone);
         command.Parameters.AddWithValue("@password", user.EncryptedPassword);
+        command.Parameters.AddWithValue("@emailHash", user.EmailHash ?? "" as object);
         command.Parameters.AddWithValue("@key", user.Key);
         command.Parameters.AddWithValue("@roleId", user.RoleId);
         command.Parameters.AddWithValue("@createdAt", user.CreatedAt);
@@ -121,7 +136,7 @@ public class UserRepository : IUserRepository
         var sql = @"
             UPDATE Users
             SET Username = @username, EncryptedEmail = @email, EncryptedPhone = @phone,
-                EncryptedPassword = @password, [Key] = @key, UpdatedAt = @updatedAt
+                EncryptedPassword = @password, EmailHash = @emailHash, [Key] = @key, UpdatedAt = @updatedAt
             WHERE Id = @id";
         using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@id", user.Id);
@@ -129,6 +144,7 @@ public class UserRepository : IUserRepository
         command.Parameters.AddWithValue("@email", user.EncryptedEmail);
         command.Parameters.AddWithValue("@phone", user.EncryptedPhone);
         command.Parameters.AddWithValue("@password", user.EncryptedPassword);
+        command.Parameters.AddWithValue("@emailHash", user.EmailHash ?? "" as object);
         command.Parameters.AddWithValue("@key", user.Key);
         command.Parameters.AddWithValue("@updatedAt", user.UpdatedAt);
         await command.ExecuteNonQueryAsync();
@@ -174,11 +190,12 @@ public class UserRepository : IUserRepository
         EncryptedEmail = r.IsDBNull(2) ? null : (byte[])r.GetValue(2),
         EncryptedPhone = r.IsDBNull(3) ? null : (byte[])r.GetValue(3),
         EncryptedPassword = r.IsDBNull(4) ? null : (byte[])r.GetValue(4),
-        Key = r.GetInt32(5),
-        RoleId = r.GetInt32(6),
-        RoleName = r.GetString(7),
-        IsActive = r.GetBoolean(8),
-        CreatedAt = r.GetDateTime(9),
-        UpdatedAt = r.GetDateTime(10)
+        EmailHash = r.IsDBNull(5) ? null : r.GetString(5),
+        Key = r.GetInt32(6),
+        RoleId = r.GetInt32(7),
+        RoleName = r.GetString(8),
+        IsActive = r.GetBoolean(9),
+        CreatedAt = r.GetDateTime(10),
+        UpdatedAt = r.GetDateTime(11)
     };
 }

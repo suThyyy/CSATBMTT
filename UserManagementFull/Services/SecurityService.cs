@@ -29,7 +29,8 @@ public class SecurityService
         var plainBytes = Encoding.UTF8.GetBytes(plainText);
 
         // Mã hóa trực tiếp bằng AES-128 engine, không dùng thư viện ngoài
-        var encryptedHex = _aesEngine.EncryptData(plainText, Convert.ToHexString(key).ToLower());
+        // Sử dụng EncryptDataHex để giữ format hex (compatible với DB hiện tại)
+        var encryptedHex = _aesEngine.EncryptDataHex(plainText, Convert.ToHexString(key).ToLower());
 
         // Chuyển hex string thành byte array
         return Convert.FromHexString(encryptedHex);
@@ -44,7 +45,8 @@ public class SecurityService
         var encryptedHex = Convert.ToHexString(cipherData).ToLower();
 
         // Giải mã bằng AES-128 engine
-        return _aesEngine.DecryptData(encryptedHex, Convert.ToHexString(key).ToLower());
+        // Sử dụng DecryptDataHex vì dữ liệu lưu trong DB ở dạng hex
+        return _aesEngine.DecryptDataHex(encryptedHex, Convert.ToHexString(key).ToLower());
     }
 
 
@@ -89,6 +91,14 @@ public class SecurityService
     public int GenerateUserKey()
     {
         return RandomNumberGenerator.GetInt32(100_000, int.MaxValue);
+    }
+
+    /// <summary>Tạo hash của email dùng để kiểm tra duplicate (không phụ thuộc vào user key)</summary>
+    public string GetEmailHash(string email)
+    {
+        var normalizedEmail = email.ToLower().Trim();
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedEmail));
+        return Convert.ToBase64String(hashBytes);
     }
 
     // ── Private ────────────────────────────────────────────────────────────

@@ -25,8 +25,8 @@ public class UsersController : ControllerBase
 
     /// <summary>
     /// Lấy danh sách người dùng có phân trang.
-    /// - Admin: có thể bật mask=false để xem đầy đủ
-    /// - Viewer: luôn bị mask theo cấu hình Admin đã set
+    /// - Admin: có thể bật mask=false để xem đầy đủ, xem tất cả users
+    /// - Viewer: luôn bị mask theo cấu hình Admin đã set, KHÔNG xem được Admin users
     /// </summary>
     [HttpGet]
     [Authorize(Roles = "Admin,Viewer")]
@@ -41,6 +41,12 @@ public class UsersController : ControllerBase
         var result = await _userService.GetUsers(false, skip, limit);
         if (!result.Success)
             return Ok(result);
+
+        // Nếu Viewer, lọc bỏ tất cả Admin users
+        if (IsViewer())
+        {
+            result.Data!.Items = result.Data.Items.Where(u => u.Role != "Admin").ToList();
+        }
 
         // Áp dụng masking cho Viewer hoặc Admin khi mask=true
         if ((IsAdmin() && mask) || IsViewer())
@@ -87,7 +93,7 @@ public class UsersController : ControllerBase
     /// <summary>
     /// Lấy thông tin người dùng theo ID.
     /// - Admin: xem tất cả, có thể bật mask=false
-    /// - Viewer: xem tất cả nhưng luôn bị mask theo config
+    /// - Viewer: xem tất cả nhưng luôn bị mask theo config, KHÔNG xem được Admin users
     /// - User: chỉ xem thông tin của chính mình, có thể tắt mask
     /// </summary>
     [HttpGet("{id}")]
@@ -97,13 +103,26 @@ public class UsersController : ControllerBase
     [ProducesResponseType(403)]
     public async Task<IActionResult> GetUser(int id, [FromQuery] bool mask = true)
     {
-        if (IsUser() && GetCurrentUserId() != id)
+        var currentUserId = GetCurrentUserId();
+
+        // Nếu không lấy được user ID từ token -> lỗi
+        if (currentUserId <= 0)
+            return Unauthorized(ApiResponse<string>.Fail("Token không hợp lệ - không tìm thấy user ID"));
+
+        // Nếu user role và cố xem người khác -> forbid
+        if (IsUser() && currentUserId != id)
             return Forbid();
 
         // Lấy user từ service (không mask trước)
         var result = await _userService.GetUserById(id, false);
         if (!result.Success)
             return NotFound(result);
+
+        // Nếu Viewer cố xem Admin user -> forbid
+        if (IsViewer() && result.Data!.Role == "Admin")
+        {
+            return Forbid();
+        }
 
         // Áp dụng masking config cho Viewer hoặc Admin khi mask=true
         if ((IsAdmin() && mask) || IsViewer())
@@ -119,7 +138,7 @@ public class UsersController : ControllerBase
             result.Data.Phone = _maskingConfigService.ApplyMaskingToPhone(result.Data.Phone ?? "", config);
         }
         // User xem chính mình: áp dụng mask nếu mask=true
-        else if (IsUser() && GetCurrentUserId() == id && mask)
+        else if (IsUser() && currentUserId == id && mask)
         {
             var maskingConfigResp = await _maskingConfigService.GetConfig();
             var config = new MaskingConfig
@@ -139,17 +158,30 @@ public class UsersController : ControllerBase
     /// Cập nhật thông tin người dùng.
     /// - Admin: cập nhật bất kỳ ai
     /// - User: chỉ cập nhật thông tin của chính mình
-    /// - Viewer: KHÔNG được phép cập nhật
+    /// - Viewer: chỉ cập nhật thông tin của chính mình
     /// </summary>
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin,User")]
+    [Authorize(Roles = "Admin,User,Viewer")]
     [ProducesResponseType(typeof(ApiResponse<string>), 200)]
     [ProducesResponseType(typeof(ApiResponse<string>), 400)]
     [ProducesResponseType(403)]
     public async Task<IActionResult> UpdateUser(int id, UpdateUserRequest request)
     {
-        if (IsUser() && GetCurrentUserId() != id)
-            return Forbid();
+        var currentUserId = GetCurrentUserId();
+        var isAdmin = IsAdmin();
+        var isUser = IsUser();
+        var isViewer = IsViewer();
+
+        // Nếu không lấy được user ID từ token -> lỗi
+        if (currentUserId <= 0)
+            return Unauthorized(ApiResponse<string>.Fail("Token không hợp lệ. Không tìm được user ID từ claims"));
+
+        // Nếu user hoặc viewer role và cố update người khác -> forbid với message chi tiết
+        if ((isUser || isViewer) && currentUserId != id)
+        {
+            return BadRequest(ApiResponse<string>.Fail(
+                $"Không có quyền cập nhật. User ID: {currentUserId} nhưng cố cập nhật ID: {id}. Bạn chỉ được cập nhật thông tin của chính mình."));
+        }
 
         var result = await _userService.UpdateUser(id, request);
         if (!result.Success)
@@ -203,7 +235,16 @@ public class UsersController : ControllerBase
 
     private int GetCurrentUserId()
     {
-        var claim = User.Claims.FirstOrDefault(c => c.Type == "userId");
-        return claim != null ? int.Parse(claim.Value) : 0;
+        // Thử lấy từ custom claim "userId" trước
+        var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == "userId");
+        if (userIdClaim != null && int.TryParse(userIdClaim.Value, out var userId))
+            return userId;
+
+        // Fallback: sử dụng ClaimTypes.NameIdentifier (luôn được set bởi JwtService)
+        var nameIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+        if (nameIdClaim != null && int.TryParse(nameIdClaim.Value, out var id))
+            return id;
+
+        return 0;
     }
 }

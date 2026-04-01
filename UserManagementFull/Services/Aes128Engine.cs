@@ -1,10 +1,12 @@
 using System.Text;
+using System.Security.Cryptography;
 
 namespace UserManagement.Services;
 
 /// <summary>
 /// Custom AES-128 Implementation (Từ Golang code)
 /// Mã hóa và giải mã dữ liệu bằng thuật toán AES-128 tự viết
+/// Sử dụng IV (Initialization Vector) và PBKDF2 để tăng cường bảo mật
 /// </summary>
 public class Aes128Engine
 {
@@ -48,25 +50,104 @@ public class Aes128Engine
 
     // ── ENCRYPTION ────────────────────────────────────────────────────────
 
-    /// <summary>Mã hóa dữ liệu từ plaintext và hex key, trả về hex string</summary>
+    /// <summary>
+    /// Mã hóa dữ liệu từ plaintext và password (hoặc hex key)
+    /// Sử dụng PBKDF2 để dẫn xuất khóa và IV ngẫu nhiên cho CBC mode
+    /// Trả về IV + Ciphertext dạng Base64 hoặc Hex
+    /// </summary>
     public string EncryptData(string plainData, string hexKey)
     {
-        // Chuyển hex key thành byte array
-        byte[] keyBytes = HexStringToByteArray(hexKey);
+        // Bước 1: Chuyển đầu vào thành byte
+        byte[] dataBytes = Encoding.UTF8.GetBytes(plainData);
+
+        // Bước 2: Sinh IV ngẫu nhiên (16 bytes)
+        byte[] iv = new byte[16];
+        using (var rng = RandomNumberGenerator.Create())
+        {
+            rng.GetBytes(iv);
+        }
+
+        // Bước 3: Dẫn xuất khóa từ input (sử dụng PBKDF2 nếu có, hoặc trực tiếp từ hex)
+        byte[] keyBytes;
+        if (hexKey.StartsWith("0x") || hexKey.All(c => "0123456789abcdefABCDEF".Contains(c)))
+        {
+            // Nếu là hex string, chuyển đổi
+            keyBytes = HexStringToByteArray(hexKey);
+        }
+        else
+        {
+            // Nếu là password, dẫn xuất khóa sử dụng PBKDF2
+            keyBytes = DeriveKeyFromPassword(hexKey, iv);
+        }
+
+        // Đảm bảo khóa có độ dài 16 bytes
         if (keyBytes.Length < 16)
         {
-            // Padding key nếu nhỏ hơn 16 bytes
             var padded = new byte[16];
             Array.Copy(keyBytes, padded, keyBytes.Length);
             keyBytes = padded;
         }
         else if (keyBytes.Length > 16)
         {
-            // Cắt ngắn key nếu lớn hơn 16 bytes
             Array.Resize(ref keyBytes, 16);
         }
 
+        // Bước 4: Padding dữ liệu (PKCS#7)
+        int padLen = 16 - (dataBytes.Length % 16);
+        byte[] padding = new byte[padLen];
+        for (int i = 0; i < padLen; i++)
+            padding[i] = (byte)padLen;
+
+        byte[] dataToEncrypt = new byte[dataBytes.Length + padLen];
+        Array.Copy(dataBytes, dataToEncrypt, dataBytes.Length);
+        Array.Copy(padding, 0, dataToEncrypt, dataBytes.Length, padLen);
+
+        // Bước 5: Sinh key expansion (11 round keys)
+        byte[][] roundKeys = KeyExpansion(keyBytes);
+
+        // Bước 6: Mã hóa từng khối 16 bytes sử dụng CBC mode (kết hợp với IV)
+        byte[] encrypted = new byte[dataToEncrypt.Length];
+        byte[] previousBlock = new byte[16];
+        Array.Copy(iv, previousBlock, 16);
+
+        for (int i = 0; i < dataToEncrypt.Length; i += 16)
+        {
+            byte[] block = new byte[16];
+            Array.Copy(dataToEncrypt, i, block, 0, 16);
+
+            // XOR với khối trước (IV cho khối đầu tiên)
+            for (int j = 0; j < 16; j++)
+                block[j] ^= previousBlock[j];
+
+            byte[] encryptedBlock = EncryptBlock(block, roundKeys);
+            Array.Copy(encryptedBlock, 0, encrypted, i, 16);
+            previousBlock = encryptedBlock;
+        }
+
+        // Bước 7: Ghép IV + encrypted data và trả về Base64
+        byte[] ivAndEncrypted = new byte[iv.Length + encrypted.Length];
+        Array.Copy(iv, 0, ivAndEncrypted, 0, iv.Length);
+        Array.Copy(encrypted, 0, ivAndEncrypted, iv.Length, encrypted.Length);
+
+        // Trả về Base64 (tiêu chuẩn)
+        return Convert.ToBase64String(ivAndEncrypted);
+    }
+
+    /// <summary>
+    /// Mã hóa dữ liệu và trả về dạng Hex (thay vì Base64)
+    /// </summary>
+    public string EncryptDataHex(string plainData, string hexKey)
+    {
         byte[] dataBytes = Encoding.UTF8.GetBytes(plainData);
+
+        // Sinh IV ngẫu nhiên
+        byte[] iv = new byte[16];
+        using (var rng = RandomNumberGenerator.Create())
+        {
+            rng.GetBytes(iv);
+        }
+
+        byte[] keyBytes = DeriveKeyBytes(hexKey, iv);
 
         // PKCS#7 Padding
         int padLen = 16 - (dataBytes.Length % 16);
@@ -78,70 +159,159 @@ public class Aes128Engine
         Array.Copy(dataBytes, dataToEncrypt, dataBytes.Length);
         Array.Copy(padding, 0, dataToEncrypt, dataBytes.Length, padLen);
 
-        // Expand key
         byte[][] roundKeys = KeyExpansion(keyBytes);
 
-        // Mã hóa từng khối 16 bytes
         byte[] encrypted = new byte[dataToEncrypt.Length];
+        byte[] previousBlock = new byte[16];
+        Array.Copy(iv, previousBlock, 16);
+
         for (int i = 0; i < dataToEncrypt.Length; i += 16)
         {
             byte[] block = new byte[16];
             Array.Copy(dataToEncrypt, i, block, 0, 16);
+
+            for (int j = 0; j < 16; j++)
+                block[j] ^= previousBlock[j];
+
             byte[] encryptedBlock = EncryptBlock(block, roundKeys);
             Array.Copy(encryptedBlock, 0, encrypted, i, 16);
+            previousBlock = encryptedBlock;
         }
 
-        // Trả về hex string
-        return ByteArrayToHexString(encrypted);
+        // Ghép IV + encrypted data
+        byte[] ivAndEncrypted = new byte[iv.Length + encrypted.Length];
+        Array.Copy(iv, 0, ivAndEncrypted, 0, iv.Length);
+        Array.Copy(encrypted, 0, ivAndEncrypted, iv.Length, encrypted.Length);
+
+        return ByteArrayToHexString(ivAndEncrypted);
     }
 
-    /// <summary>Giải mã dữ liệu từ hex string, trả về plaintext</summary>
-    public string DecryptData(string hexEncrypted, string hexKey)
+    /// <summary>
+    /// Giải mã dữ liệu từ Base64 string (chứa IV + ciphertext)
+    /// </summary>
+    public string DecryptData(string base64Encrypted, string hexKey)
     {
-        // Chuyển hex key thành byte array
-        byte[] keyBytes = HexStringToByteArray(hexKey);
-        if (keyBytes.Length < 16)
+        try
         {
-            var padded = new byte[16];
-            Array.Copy(keyBytes, padded, keyBytes.Length);
-            keyBytes = padded;
-        }
-        else if (keyBytes.Length > 16)
-        {
-            Array.Resize(ref keyBytes, 16);
-        }
+            // Giải mã Base64
+            byte[] ivAndEncrypted = Convert.FromBase64String(base64Encrypted);
 
-        // Chuyển hex string thành byte array
-        byte[] encrypted = HexStringToByteArray(hexEncrypted);
+            // Tách IV (16 bytes đầu) và ciphertext
+            if (ivAndEncrypted.Length < 16)
+                return base64Encrypted; // Nếu quá ngắn, trả về nguyên bản
 
-        // Kiểm tra độ dài hợp lệ
-        if (encrypted.Length % 16 != 0)
-            return hexEncrypted; // Nếu không hợp lệ, trả về nguyên bản
+            byte[] iv = new byte[16];
+            byte[] encrypted = new byte[ivAndEncrypted.Length - 16];
+            Array.Copy(ivAndEncrypted, 0, iv, 0, 16);
+            Array.Copy(ivAndEncrypted, 16, encrypted, 0, encrypted.Length);
 
-        // Expand key
-        byte[][] roundKeys = KeyExpansion(keyBytes);
+            // Dẫn xuất khóa (sử dụng cùng IV)
+            byte[] keyBytes = DeriveKeyBytes(hexKey, iv);
 
-        // Giải mã từng khối 16 bytes
-        byte[] decrypted = new byte[encrypted.Length];
-        for (int i = 0; i < encrypted.Length; i += 16)
-        {
-            byte[] block = new byte[16];
-            Array.Copy(encrypted, i, block, 0, 16);
-            byte[] decryptedBlock = DecryptBlock(block, roundKeys);
-            Array.Copy(decryptedBlock, 0, decrypted, i, 16);
-        }
+            // Kiểm tra độ dài hợp lệ
+            if (encrypted.Length % 16 != 0)
+                return base64Encrypted;
 
-        // Gỡ PKCS#7 Padding
-        if (decrypted.Length > 0)
-        {
-            int padLen = decrypted[decrypted.Length - 1];
-            if (padLen > 0 && padLen <= 16)
+            // Sinh round keys
+            byte[][] roundKeys = KeyExpansion(keyBytes);
+
+            // Giải mã từng khối 16 bytes sử dụng CBC mode
+            byte[] decrypted = new byte[encrypted.Length];
+            byte[] previousBlock = new byte[16];
+            Array.Copy(iv, previousBlock, 16);
+
+            for (int i = 0; i < encrypted.Length; i += 16)
             {
-                Array.Resize(ref decrypted, decrypted.Length - padLen);
-            }
-        }
+                byte[] block = new byte[16];
+                Array.Copy(encrypted, i, block, 0, 16);
 
-        return Encoding.UTF8.GetString(decrypted);
+                byte[] decryptedBlock = DecryptBlock(block, roundKeys);
+
+                // XOR với khối ciphertext trước (IV cho khối đầu tiên)
+                for (int j = 0; j < 16; j++)
+                    decryptedBlock[j] ^= previousBlock[j];
+
+                Array.Copy(decryptedBlock, 0, decrypted, i, 16);
+                previousBlock = block;
+            }
+
+            // Gỡ PKCS#7 Padding
+            if (decrypted.Length > 0)
+            {
+                int padLen = decrypted[decrypted.Length - 1];
+                if (padLen > 0 && padLen <= 16)
+                {
+                    Array.Resize(ref decrypted, decrypted.Length - padLen);
+                }
+            }
+
+            return Encoding.UTF8.GetString(decrypted);
+        }
+        catch
+        {
+            return base64Encrypted; // Nếu lỗi, trả về nguyên bản
+        }
+    }
+
+    /// <summary>
+    /// Giải mã dữ liệu từ Hex string (chứa IV + ciphertext)
+    /// </summary>
+    public string DecryptDataHex(string hexEncrypted, string hexKey)
+    {
+        try
+        {
+            byte[] ivAndEncrypted = HexStringToByteArray(hexEncrypted);
+
+            // Tách IV và ciphertext
+            if (ivAndEncrypted.Length < 16)
+                return hexEncrypted;
+
+            byte[] iv = new byte[16];
+            byte[] encrypted = new byte[ivAndEncrypted.Length - 16];
+            Array.Copy(ivAndEncrypted, 0, iv, 0, 16);
+            Array.Copy(ivAndEncrypted, 16, encrypted, 0, encrypted.Length);
+
+            byte[] keyBytes = DeriveKeyBytes(hexKey, iv);
+
+            if (encrypted.Length % 16 != 0)
+                return hexEncrypted;
+
+            byte[][] roundKeys = KeyExpansion(keyBytes);
+
+            byte[] decrypted = new byte[encrypted.Length];
+            byte[] previousBlock = new byte[16];
+            Array.Copy(iv, previousBlock, 16);
+
+            for (int i = 0; i < encrypted.Length; i += 16)
+            {
+                byte[] block = new byte[16];
+                Array.Copy(encrypted, i, block, 0, 16);
+
+                byte[] decryptedBlock = DecryptBlock(block, roundKeys);
+
+                for (int j = 0; j < 16; j++)
+                    decryptedBlock[j] ^= previousBlock[j];
+
+                Array.Copy(decryptedBlock, 0, decrypted, i, 16);
+                previousBlock = block;
+            }
+
+            // Gỡ PKCS#7 Padding
+            if (decrypted.Length > 0)
+            {
+                int padLen = decrypted[decrypted.Length - 1];
+                if (padLen > 0 && padLen <= 16)
+                {
+                    Array.Resize(ref decrypted, decrypted.Length - padLen);
+                }
+            }
+
+            return Encoding.UTF8.GetString(decrypted);
+        }
+        catch
+        {
+            return hexEncrypted;
+        }
     }
 
     // ── HELPER FUNCTIONS ──────────────────────────────────────────────────
@@ -159,12 +329,10 @@ public class Aes128Engine
     {
         byte[] w = new byte[176]; // 11 rounds * 16 bytes
         Array.Copy(key, w, 16);
-
         for (int i = 4; i < 44; i++)
         {
             byte[] temp = new byte[4];
             Array.Copy(w, (i - 1) * 4, temp, 0, 4);
-
             if (i % 4 == 0)
             {
                 // RotWord & SubWord
@@ -174,18 +342,15 @@ public class Aes128Engine
                 temp[2] = SBox[temp[3]];
                 temp[3] = SBox[t];
             }
-
             for (int j = 0; j < 4; j++)
                 w[i * 4 + j] = (byte)(w[(i - 4) * 4 + j] ^ temp[j]);
         }
-
         byte[][] roundKeys = new byte[11][];
         for (int i = 0; i < 11; i++)
         {
             roundKeys[i] = new byte[16];
             Array.Copy(w, i * 16, roundKeys[i], 0, 16);
         }
-
         return roundKeys;
     }
 
@@ -194,14 +359,54 @@ public class Aes128Engine
     {
         for (int i = 0; i < 16; i += 4)
         {
-            byte[] c = new byte[4];
-            Array.Copy(state, i, c, 0, 4);
+            byte s0 = state[i];
+            byte s1 = state[i + 1];
+            byte s2 = state[i + 2];
+            byte s3 = state[i + 3];
 
-            state[i] = (byte)(XTime(c[0]) ^ (XTime(c[1]) ^ c[1]) ^ c[2] ^ c[3]);
-            state[i + 1] = (byte)(c[0] ^ XTime(c[1]) ^ (XTime(c[2]) ^ c[2]) ^ c[3]);
-            state[i + 2] = (byte)(c[0] ^ c[1] ^ XTime(c[2]) ^ (XTime(c[3]) ^ c[3]));
-            state[i + 3] = (byte)((XTime(c[0]) ^ c[0]) ^ c[1] ^ c[2] ^ XTime(c[3]));
+            state[i] = (byte)(XTime(s0) ^ (XTime(s1) ^ s1) ^ s2 ^ s3);
+            state[i + 1] = (byte)(s0 ^ XTime(s1) ^ (XTime(s2) ^ s2) ^ s3);
+            state[i + 2] = (byte)(s0 ^ s1 ^ XTime(s2) ^ (XTime(s3) ^ s3));
+            state[i + 3] = (byte)((XTime(s0) ^ s0) ^ s1 ^ s2 ^ XTime(s3));
         }
+    }
+
+    // ── ENCRYPTION CORE OPERATIONS ────────────────────────────────────────
+
+    /// <summary>SubBytes: thay thế từng byte từ S-Box</summary>
+    private void SubBytes(byte[] state)
+    {
+        for (int i = 0; i < 16; i++)
+            state[i] = SBox[state[i]];
+    }
+
+    /// <summary>ShiftRows: dịch chuyển các hàng trong state</summary>
+    private void ShiftRows(byte[] state)
+    {
+        // Row 1: dịch 1 vị trí
+        byte t1 = state[1]; state[1] = state[5];  state[5] = state[9]; state[9] = state[13]; state[13] = t1;
+        // Row 2: dịch 2 vị trí
+        byte t2 = state[2]; byte t3 = state[6]; state[2] = state[10]; state[6] = state[14]; state[10] = t2; state[14] = t3;
+        // Row 3: dịch 3 vị trí
+        byte t4 = state[3]; state[3] = state[15]; state[15] = state[11]; state[11] = state[7]; state[7] = t4;
+    }
+    /// <summary>AddRoundKey: XOR với round key</summary>
+    private void AddRoundKey(byte[] state, byte[] roundKey)
+    {
+        for (int i = 0; i < 16; i++)
+            state[i] ^= roundKey[i];
+    }
+
+    /// <summary>Thực hiện 1 round mã hóa chính (SubBytes -> ShiftRows -> MixColumns -> AddRoundKey)</summary>
+    private void EncryptMainRound(byte[] state, byte[] roundKey)
+    {
+        SubBytes(state); ShiftRows(state); MixColumns(state); AddRoundKey(state, roundKey);
+    }
+
+    /// <summary>Thực hiện round cuối cùng mã hóa (SubBytes -> ShiftRows -> AddRoundKey, không MixColumns)</summary>
+    private void EncryptFinalRound(byte[] state, byte[] roundKey)
+    {
+        SubBytes(state); ShiftRows(state); AddRoundKey(state, roundKey);
     }
 
     /// <summary>EncryptBlock: mã hóa 1 khối 16 bytes</summary>
@@ -209,78 +414,70 @@ public class Aes128Engine
     {
         byte[] state = new byte[16];
         Array.Copy(block, state, 16);
-
-        // AddRoundKey round 0
-        for (int i = 0; i < 16; i++)
-            state[i] ^= roundKeys[0][i];
-
-        // 9 vòng chính
+        // Initial Round: AddRoundKey round 0
+        AddRoundKey(state, roundKeys[0]);
+        // 9 vòng chính (round 1-9)
         for (int r = 1; r < 10; r++)
-        {
-            // SubBytes
-            for (int i = 0; i < 16; i++)
-                state[i] = SBox[state[i]];
-
-            // ShiftRows
-            byte t1 = state[1];
-            state[1] = state[5];
-            state[5] = state[9];
-            state[9] = state[13];
-            state[13] = t1;
-
-            byte t2 = state[2];
-            byte t3 = state[6];
-            state[2] = state[10];
-            state[6] = state[14];
-            state[10] = t2;
-            state[14] = t3;
-
-            byte t4 = state[3];
-            state[3] = state[15];
-            state[15] = state[11];
-            state[11] = state[7];
-            state[7] = t4;
-
-            // MixColumns
-            MixColumns(state);
-
-            // AddRoundKey
-            for (int i = 0; i < 16; i++)
-                state[i] ^= roundKeys[r][i];
-        }
-
-        // Final Round (no MixColumns)
-        for (int i = 0; i < 16; i++)
-            state[i] = SBox[state[i]];
-
-        // ShiftRows
-        byte f1 = state[1];
-        state[1] = state[5];
-        state[5] = state[9];
-        state[9] = state[13];
-        state[13] = f1;
-
-        byte f2 = state[2];
-        byte f3 = state[6];
-        state[2] = state[10];
-        state[6] = state[14];
-        state[10] = f2;
-        state[14] = f3;
-
-        byte f4 = state[3];
-        state[3] = state[15];
-        state[15] = state[11];
-        state[11] = state[7];
-        state[7] = f4;
-
-        // AddRoundKey
-        for (int i = 0; i < 16; i++)
-            state[i] ^= roundKeys[10][i];
-
+            EncryptMainRound(state, roundKeys[r]);
+        // Final Round (round 10, không MixColumns)
+        EncryptFinalRound(state, roundKeys[10]);
         return state;
     }
 
-    // ── DECRYPTION ────────────────────────────────────────────────────────
+    // ── KEY DERIVATION ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Dẫn xuất khóa từ password sử dụng PBKDF2
+    /// PBKDF2 áp dụng hàm hash (HMAC-SHA256) lặp đi lặp lại để tăng cường bảo mật
+    /// </summary>
+    private byte[] DeriveKeyFromPassword(string password, byte[] salt)
+    {
+        // Sử dụng static method Pbkdf2 thay vì constructor (khuyến cáo từ .NET 6+)
+        var key = Rfc2898DeriveBytes.Pbkdf2(
+            Encoding.UTF8.GetBytes(password),
+            salt,
+            iterations: 10000,
+            HashAlgorithmName.SHA256,
+            outputLength: 16); // AES-128 cần key 16 bytes
+
+        return key;
+    }
+
+    /// <summary>
+    /// Dẫn xuất khóa từ hex key hoặc password
+    /// </summary>
+    private byte[] DeriveKeyBytes(string input, byte[] salt)
+    {
+        byte[] keyBytes;
+
+        // Kiểm tra xem input có phải hex string không
+        if (input.StartsWith("0x") || input.All(c => "0123456789abcdefABCDEF".Contains(c)))
+        {
+            // Nếu là hex, chuyển đổi
+            keyBytes = HexStringToByteArray(input);
+        }
+        else
+        {
+            // Nếu là password, dẫn xuất khóa sử dụng PBKDF2
+            keyBytes = DeriveKeyFromPassword(input, salt);
+        }
+
+        // Đảm bảo kích thước 16 bytes
+        if (keyBytes.Length < 16)
+        {
+            var padded = new byte[16];
+            Array.Copy(keyBytes, padded, keyBytes.Length);
+            keyBytes = padded;
+        }
+        else if (keyBytes.Length > 16)
+        {
+            Array.Resize(ref keyBytes, 16);
+        }
+
+        return keyBytes;
+    }
+
+    // ── DECRYPTION CORE OPERATIONS ────────────────────────────────────────
 
     /// <summary>MulGF: phép nhân trên trường Galois (cho InvMixColumns)</summary>
     private byte MulGf(byte a, byte b)
@@ -296,92 +493,83 @@ public class Aes128Engine
         return res;
     }
 
+    /// <summary>InvSubBytes: thay thế từng byte từ Inverse S-Box</summary>
+    private void InvSubBytes(byte[] state)
+    {
+        for (int i = 0; i < 16; i++)
+            state[i] = _invSbox[state[i]];
+    }
+
+    /// <summary>InvShiftRows: dịch chuyển các hàng ngược lại (giải mã)</summary>
+    private void InvShiftRows(byte[] state)
+    {
+        // Row 1: dịch ngược 1 vị trí
+        byte d1 = state[1];
+        state[1] = state[13];
+        state[13] = state[9];
+        state[9] = state[5];
+        state[5] = d1;
+
+        // Row 2: dịch ngược 2 vị trí
+        byte d2 = state[2];
+        byte d3 = state[6];
+        state[2] = state[10];
+        state[6] = state[14];
+        state[10] = d2;
+        state[14] = d3;
+
+        // Row 3: dịch ngược 3 vị trí
+        byte d4 = state[3];
+        state[3] = state[7];
+        state[7] = state[11];
+        state[11] = state[15];
+        state[15] = d4;
+    }
+
     /// <summary>InvMixColumns: bước hỗn trộn cột nghịch đảo</summary>
     private void InvMixColumns(byte[] state)
     {
         for (int i = 0; i < 16; i += 4)
         {
-            byte[] c = new byte[4];
-            Array.Copy(state, i, c, 0, 4);
+            byte s0 = state[i];
+            byte s1 = state[i + 1];
+            byte s2 = state[i + 2];
+            byte s3 = state[i + 3];
 
-            state[i] = (byte)(MulGf(c[0], 0x0e) ^ MulGf(c[1], 0x0b) ^ MulGf(c[2], 0x0d) ^ MulGf(c[3], 0x09));
-            state[i + 1] = (byte)(MulGf(c[0], 0x09) ^ MulGf(c[1], 0x0e) ^ MulGf(c[2], 0x0b) ^ MulGf(c[3], 0x0d));
-            state[i + 2] = (byte)(MulGf(c[0], 0x0d) ^ MulGf(c[1], 0x09) ^ MulGf(c[2], 0x0e) ^ MulGf(c[3], 0x0b));
-            state[i + 3] = (byte)(MulGf(c[0], 0x0b) ^ MulGf(c[1], 0x0d) ^ MulGf(c[2], 0x09) ^ MulGf(c[3], 0x0e));
+            state[i] = (byte)(MulGf(s0, 0x0e) ^ MulGf(s1, 0x0b) ^ MulGf(s2, 0x0d) ^ MulGf(s3, 0x09));
+            state[i + 1] = (byte)(MulGf(s0, 0x09) ^ MulGf(s1, 0x0e) ^ MulGf(s2, 0x0b) ^ MulGf(s3, 0x0d));
+            state[i + 2] = (byte)(MulGf(s0, 0x0d) ^ MulGf(s1, 0x09) ^ MulGf(s2, 0x0e) ^ MulGf(s3, 0x0b));
+            state[i + 3] = (byte)(MulGf(s0, 0x0b) ^ MulGf(s1, 0x0d) ^ MulGf(s2, 0x09) ^ MulGf(s3, 0x0e));
         }
     }
 
+    /// <summary>Thực hiện 1 round giải mã chính (InvShiftRows -> InvSubBytes -> AddRoundKey -> InvMixColumns)</summary>
+    private void DecryptMainRound(byte[] state, byte[] roundKey)
+    {
+        InvShiftRows(state);
+        InvSubBytes(state);
+        AddRoundKey(state, roundKey);
+        InvMixColumns(state);
+    }
+    /// <summary>Thực hiện round cuối cùng giải mã (InvShiftRows -> InvSubBytes -> AddRoundKey, không InvMixColumns)</summary>
+    private void DecryptFinalRound(byte[] state, byte[] roundKey)
+    {
+        InvShiftRows(state);
+        InvSubBytes(state);
+        AddRoundKey(state, roundKey);
+    }
     /// <summary>DecryptBlock: giải mã 1 khối 16 bytes</summary>
     private byte[] DecryptBlock(byte[] block, byte[][] roundKeys)
     {
         byte[] state = new byte[16];
         Array.Copy(block, state, 16);
-
-        // AddRoundKey round 10
-        for (int i = 0; i < 16; i++)
-            state[i] ^= roundKeys[10][i];
-
-        // 9 vòng ngược
+        // Initial Round: AddRoundKey round 10
+        AddRoundKey(state, roundKeys[10]);
+        // 9 vòng chính ngược (round 9-1)
         for (int r = 9; r > 0; r--)
-        {
-            // InvShiftRows
-            byte d1 = state[1];
-            state[1] = state[13];
-            state[13] = state[9];
-            state[9] = state[5];
-            state[5] = d1;
-
-            byte d2 = state[2];
-            byte d3 = state[6];
-            state[2] = state[10];
-            state[6] = state[14];
-            state[10] = d2;
-            state[14] = d3;
-
-            byte d4 = state[3];
-            state[3] = state[7];
-            state[7] = state[11];
-            state[11] = state[15];
-            state[15] = d4;
-
-            // InvSubBytes
-            for (int i = 0; i < 16; i++)
-                state[i] = _invSbox[state[i]];
-
-            // AddRoundKey
-            for (int i = 0; i < 16; i++)
-                state[i] ^= roundKeys[r][i];
-
-            // InvMixColumns
-            InvMixColumns(state);
-        }
-
-        // Final Round
-        byte f1 = state[1];
-        state[1] = state[13];
-        state[13] = state[9];
-        state[9] = state[5];
-        state[5] = f1;
-
-        byte f2 = state[2];
-        byte f3 = state[6];
-        state[2] = state[10];
-        state[6] = state[14];
-        state[10] = f2;
-        state[14] = f3;
-
-        byte f4 = state[3];
-        state[3] = state[7];
-        state[7] = state[11];
-        state[11] = state[15];
-        state[15] = f4;
-
-        for (int i = 0; i < 16; i++)
-            state[i] = _invSbox[state[i]];
-
-        for (int i = 0; i < 16; i++)
-            state[i] ^= roundKeys[0][i];
-
+            DecryptMainRound(state, roundKeys[r]);
+        // Final Round (round 0, không InvMixColumns)
+        DecryptFinalRound(state, roundKeys[0]);
         return state;
     }
 

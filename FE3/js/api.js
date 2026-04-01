@@ -1,6 +1,5 @@
 // Quản lý API calls
 class ApiClient {
-
   // mock disabled
   static isMockEnabled() {
     return false;
@@ -83,13 +82,19 @@ class ApiClient {
 
   static updateUser(id, username, email, phone, password) {
     const endpoint = ENDPOINTS.USERS.UPDATE.replace("{id}", id);
-    return this.request("PUT", endpoint, {
+    const data = {
       id,
       username,
       email,
       phone,
-      password,
-    });
+    };
+    // Only include password if it's not empty
+    if (password && password.trim()) {
+      data.password = password;
+    } else {
+      data.password = "";
+    }
+    return this.request("PUT", endpoint, data);
   }
 
   static deleteUser(id) {
@@ -217,7 +222,9 @@ class ApiClient {
       const limit = Number(params?.limit || 10);
 
       const items = db.users.slice(skip, skip + limit).map((u) => {
-        return shouldMask ? this.applyMaskingToUser(u, db.maskingConfig.algorithm) : { ...u };
+        return shouldMask
+          ? this.applyMaskingToUser(u, db.maskingConfig.algorithm)
+          : { ...u };
       });
 
       return {
@@ -310,7 +317,9 @@ class ApiClient {
     }
 
     // TOGGLE ACTIVE
-    const toggleActiveMatch = normalizedEndpoint.match(/^\/users\/(\d+)\/active$/);
+    const toggleActiveMatch = normalizedEndpoint.match(
+      /^\/users\/(\d+)\/active$/,
+    );
     if (normalizedMethod === "PATCH" && toggleActiveMatch) {
       const id = Number(toggleActiveMatch[1]);
       const user = db.users.find((u) => u.id === id);
@@ -385,7 +394,9 @@ class ApiClient {
     }
 
     // MASKING USER
-    const maskingUserMatch = normalizedEndpoint.match(/^\/masking\/user\/(\d+)$/);
+    const maskingUserMatch = normalizedEndpoint.match(
+      /^\/masking\/user\/(\d+)$/,
+    );
     if (normalizedMethod === "GET" && maskingUserMatch) {
       const id = Number(maskingUserMatch[1]);
       const user = db.users.find((u) => u.id === id);
@@ -437,7 +448,8 @@ class ApiClient {
 
     if (
       normalizedMethod === "GET" &&
-      normalizedEndpoint === ENDPOINTS.ADMIN.GET_MASKING_ALGORITHMS.toLowerCase()
+      normalizedEndpoint ===
+        ENDPOINTS.ADMIN.GET_MASKING_ALGORITHMS.toLowerCase()
     ) {
       return {
         success: true,

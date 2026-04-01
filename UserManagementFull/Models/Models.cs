@@ -11,6 +11,7 @@ public class User
     public byte[]? EncryptedEmail { get; set; }
     public byte[]? EncryptedPhone { get; set; }
     public byte[]? EncryptedPassword { get; set; }
+    public string? EmailHash { get; set; }
     public int Key { get; set; }
     public int RoleId { get; set; }
     public string? RoleName { get; set; }
@@ -76,9 +77,8 @@ public class UpdateUserRequest
     [RegularExpression(@"^[\+]?[0-9]+$", ErrorMessage = "Phone chỉ được chứa số và dấu + ở đầu")]
     public required string Phone { get; set; }
 
-    [Required]
     [StringLength(100, MinimumLength = 6)]
-    public required string Password { get; set; }
+    public string? Password { get; set; }
 }
 
 // ── Response DTOs ──────────────────────────────────────────────────────────

@@ -860,14 +860,18 @@ function renderHome() {
               <div class="stat-card-value">Cá nhân</div>
               <div class="stat-card-action">Xem profile <i class="fa-solid fa-arrow-right"></i></div>
             </div>
-            ${AuthManager.isAdmin() ? `
+            ${
+              AuthManager.isAdmin()
+                ? `
             <div class="stat-card" onclick="Router.redirect('/admin/masking-config')">
               <div class="stat-card-icon" style="background:var(--orange-soft)"><i class="fa-solid fa-gears"></i></div>
               <div class="stat-card-label">Admin</div>
               <div class="stat-card-value">Masking</div>
               <div class="stat-card-action">Cấu hình <i class="fa-solid fa-arrow-right"></i></div>
             </div>
-            ` : ""}
+            `
+                : ""
+            }
           </div>
           <div id="maskingDemoContainer" style="margin-top:24px"></div>
         </div>
@@ -950,19 +954,20 @@ function renderRegister() {
         <form id="registerForm">
           <div class="form-group">
             <label class="form-label">Tên đăng nhập (3–50 ký tự)</label>
-            <input type="text" id="regUsername" placeholder="john_doe" required class="form-input">
+            <input type="text" id="regUsername" placeholder="john_doe" required class="form-input" minlength="3" maxlength="50">
           </div>
           <div class="form-group">
             <label class="form-label">Email</label>
             <input type="email" id="regEmail" placeholder="john@example.com" required class="form-input">
           </div>
           <div class="form-group">
-            <label class="form-label">Số điện thoại</label>
+            <label class="form-label">Số điện thoại (10-15 ký tự, bắt đầu bằng + hoặc số)</label>
             <input type="tel" id="regPhone" placeholder="+84901234567" required class="form-input">
+            <small id="regPhoneError" style="color:var(--red);font-size:12px;margin-top:4px;display:none">Số điện thoại phải có 10-15 chữ số và bắt đầu bằng + hoặc số</small>
           </div>
           <div class="form-group">
             <label class="form-label">Mật khẩu (6–100 ký tự)</label>
-            <input type="password" id="regPassword" placeholder="••••••••" required class="form-input">
+            <input type="password" id="regPassword" placeholder="••••••••" required class="form-input" minlength="6" maxlength="100">
           </div>
           <div id="registerError" class="alert alert-error" style="display:none;margin-bottom:12px"></div>
           <div id="registerSuccess" class="alert alert-success" style="display:none;margin-bottom:12px"></div>
@@ -977,25 +982,84 @@ function renderRegister() {
     </div>
   `;
 
-  document.getElementById("registerForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const username = document.getElementById("regUsername").value;
-    const email = document.getElementById("regEmail").value;
-    const phone = document.getElementById("regPhone").value;
-    const password = document.getElementById("regPassword").value;
-    const errorDiv = document.getElementById("registerError");
-    const successDiv = document.getElementById("registerSuccess");
+  // Phone validation function
+  const validatePhoneFormat = (phone) => {
+    const phoneRegex = /^[\+]?[0-9]+$/;
+    const cleanPhone = phone.replace(/\s/g, "");
+    return (
+      phoneRegex.test(cleanPhone) &&
+      cleanPhone.length >= 10 &&
+      cleanPhone.length <= 15
+    );
+  };
 
-    try {
-      const response = await ApiClient.register(username, email, phone, password);
-      successDiv.textContent = "Đăng ký thành công! Đang chuyển hướng...";
-      successDiv.style.display = "block";
-      setTimeout(() => Router.redirect("/login"), 2000);
-    } catch (error) {
-      errorDiv.textContent = error.message;
-      errorDiv.style.display = "block";
+  const regPhoneInput = document.getElementById("regPhone");
+  const regPhoneError = document.getElementById("regPhoneError");
+
+  // Real-time phone validation
+  regPhoneInput.addEventListener("input", () => {
+    if (regPhoneInput.value && !validatePhoneFormat(regPhoneInput.value)) {
+      regPhoneError.style.display = "block";
+    } else {
+      regPhoneError.style.display = "none";
     }
   });
+
+  document
+    .getElementById("registerForm")
+    .addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const username = document.getElementById("regUsername").value;
+      const email = document.getElementById("regEmail").value;
+      const phone = document.getElementById("regPhone").value;
+      const password = document.getElementById("regPassword").value;
+      const errorDiv = document.getElementById("registerError");
+      const successDiv = document.getElementById("registerSuccess");
+
+      // Validate all fields client-side before submit
+      if (!username || username.length < 3 || username.length > 50) {
+        errorDiv.textContent = "Tên đăng nhập phải có 3-50 ký tự";
+        errorDiv.style.display = "block";
+        return;
+      }
+
+      if (!email) {
+        errorDiv.textContent = "Email không được để trống";
+        errorDiv.style.display = "block";
+        return;
+      }
+
+      if (!validatePhoneFormat(phone)) {
+        errorDiv.textContent =
+          "Số điện thoại phải có 10-15 chữ số và bắt đầu bằng + hoặc số";
+        errorDiv.style.display = "block";
+        return;
+      }
+
+      if (!password || password.length < 6 || password.length > 100) {
+        errorDiv.textContent = "Mật khẩu phải có 6-100 ký tự";
+        errorDiv.style.display = "block";
+        return;
+      }
+
+      errorDiv.style.display = "none";
+      successDiv.style.display = "none";
+
+      try {
+        const response = await ApiClient.register(
+          username,
+          email,
+          phone,
+          password,
+        );
+        successDiv.textContent = "Đăng ký thành công! Đang chuyển hướng...";
+        successDiv.style.display = "block";
+        setTimeout(() => Router.redirect("/login"), 2000);
+      } catch (error) {
+        errorDiv.textContent = error.message;
+        errorDiv.style.display = "block";
+      }
+    });
 }
 
 // ==================== RENDER DASHBOARD ====================
@@ -1012,16 +1076,22 @@ async function renderDashboard() {
             <h1 class="page-title">Danh sách người dùng</h1>
             <p class="page-subtitle">Quản lý tất cả tài khoản trong hệ thống</p>
           </div>
-          ${AuthManager.isAdmin() ? `
+          ${
+            AuthManager.isAdmin()
+              ? `
           <label class="toggle-wrap" style="margin-top:6px">
             <input type="checkbox" id="maskToggle" checked class="toggle-input">
             <div class="toggle-track"></div>
             <span class="toggle-label">Bật masking</span>
           </label>
-          ` : ""}
+          `
+              : ""
+          }
         </div>
         <div class="page-body">
-          ${AuthManager.isAdmin() ? `
+          ${
+            AuthManager.isAdmin()
+              ? `
           <div class="card" style="margin-bottom:20px">
             <div class="card-title"><i class="fa-solid fa-gears"></i> Cấu hình Data Masking</div>
             <div id="maskingConfigContent">
@@ -1030,7 +1100,9 @@ async function renderDashboard() {
               </div>
             </div>
           </div>
-          ` : ""}
+          `
+              : ""
+          }
 
           <div id="loadingSpinner" class="spinner-wrap"><div class="spinner"></div></div>
           <div id="usersTable"></div>
@@ -1060,7 +1132,7 @@ async function renderDashboard() {
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
           <div class="detail-field">
             <div class="detail-field-label">Trạng thái</div>
-            <div class="detail-field-value" style="color:${currentConfig.enabled ? 'var(--green)' : 'var(--red)'}">
+            <div class="detail-field-value" style="color:${currentConfig.enabled ? "var(--green)" : "var(--red)"}">
               ${currentConfig.enabled ? '<i class="fa-solid fa-circle-check"></i> Đang bật' : '<i class="fa-regular fa-circle-xmark"></i> Đang tắt'}
             </div>
           </div>
@@ -1090,20 +1162,24 @@ async function renderDashboard() {
 
       document.getElementById("maskingConfigContent").innerHTML = html;
 
-      document.getElementById("quickMaskingForm").addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const enabled = document.getElementById("quickEnabledToggle").checked;
-        const algorithm = parseInt(document.getElementById("quickAlgorithmSelect").value);
-        const msgDiv = document.getElementById("quickConfigMessage");
+      document
+        .getElementById("quickMaskingForm")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const enabled = document.getElementById("quickEnabledToggle").checked;
+          const algorithm = parseInt(
+            document.getElementById("quickAlgorithmSelect").value,
+          );
+          const msgDiv = document.getElementById("quickConfigMessage");
 
-        try {
-          await ApiClient.updateMaskingConfig(enabled, algorithm);
-          msgDiv.innerHTML = `<div class="alert alert-success" style="margin-top:10px"><i class="fa-solid fa-circle-check"></i> Cập nhật thành công!</div>`;
-          setTimeout(() => loadMaskingConfig(), 1500);
-        } catch (error) {
-          msgDiv.innerHTML = `<div class="alert alert-error" style="margin-top:10px"><i class="fa-solid fa-circle-xmark"></i> ${error.message}</div>`;
-        }
-      });
+          try {
+            await ApiClient.updateMaskingConfig(enabled, algorithm);
+            msgDiv.innerHTML = `<div class="alert alert-success" style="margin-top:10px"><i class="fa-solid fa-circle-check"></i> Cập nhật thành công!</div>`;
+            setTimeout(() => loadMaskingConfig(), 1500);
+          } catch (error) {
+            msgDiv.innerHTML = `<div class="alert alert-error" style="margin-top:10px"><i class="fa-solid fa-circle-xmark"></i> ${error.message}</div>`;
+          }
+        });
     } catch (error) {
       document.getElementById("maskingConfigContent").innerHTML = `
         <div class="alert alert-error">Lỗi: ${error.message}</div>
@@ -1114,7 +1190,11 @@ async function renderDashboard() {
   async function loadUsers() {
     try {
       document.getElementById("loadingSpinner").style.display = "flex";
-      const response = await ApiClient.getUsers(maskingEnabled, currentPage * pageSize, pageSize);
+      const response = await ApiClient.getUsers(
+        maskingEnabled,
+        currentPage * pageSize,
+        pageSize,
+      );
       const users = response.data.items;
       const total = response.data.total;
 
@@ -1148,35 +1228,47 @@ async function renderDashboard() {
             </tr>
           </thead>
           <tbody>
-            ${users.map((u) => `
+            ${users
+              .map(
+                (u) => `
               <tr>
                 <td class="text-mono">#${u.id}</td>
                 <td style="font-weight:600">${u.username}</td>
                 <td class="text-mono">${u.email}</td>
                 <td class="text-mono">${u.phone}</td>
                 <td>
-                  <span class="badge ${u.role === 'Admin' ? 'badge-admin' : u.role === 'Viewer' ? 'badge-viewer' : 'badge-user'}">
+                  <span class="badge ${u.role === "Admin" ? "badge-admin" : u.role === "Viewer" ? "badge-viewer" : "badge-user"}">
                     ${u.role}
                   </span>
                 </td>
                 <td>
-                  <span class="badge ${u.isActive ? 'badge-active' : 'badge-locked'}">
+                  <span class="badge ${u.isActive ? "badge-active" : "badge-locked"}">
                     ${u.isActive ? '<i class="fa-solid fa-circle-check"></i> Hoạt động' : '<i class="fa-regular fa-circle-xmark"></i> Bị khóa'}
                   </span>
                 </td>
                 <td>
                   <button onclick="Router.redirect('/user/${u.id}')" class="action-link action-view">Xem</button>
-                  ${AuthManager.isAdmin() && u.role === "User" ? `
+                  ${
+                    AuthManager.isAdmin() && u.role === "User"
+                      ? `
                     <button onclick="promoteUserToViewer(${u.id})" class="action-link action-promote">Nâng cấp</button>
-                  ` : ""}
-                  ${AuthManager.isAdmin() ? `
+                  `
+                      : ""
+                  }
+                  ${
+                    AuthManager.isAdmin()
+                      ? `
                     <button onclick="toggleUserActive(${u.id}, ${!u.isActive})" class="action-link action-lock">
                       ${u.isActive ? "Khóa" : "Mở khóa"}
                     </button>
-                  ` : ""}
+                  `
+                      : ""
+                  }
                 </td>
               </tr>
-            `).join("")}
+            `,
+              )
+              .join("")}
           </tbody>
         </table>
       </div>
@@ -1201,8 +1293,14 @@ async function renderDashboard() {
     document.getElementById("pagination").innerHTML = paginationHtml;
   }
 
-  window.previousPage = () => { currentPage = Math.max(0, currentPage - 1); loadUsers(); };
-  window.nextPage = () => { currentPage++; loadUsers(); };
+  window.previousPage = () => {
+    currentPage = Math.max(0, currentPage - 1);
+    loadUsers();
+  };
+  window.nextPage = () => {
+    currentPage++;
+    loadUsers();
+  };
 
   window.deleteUserConfirm = async (userId) => {
     if (confirm("Bạn chắc chắn muốn xóa người dùng này?")) {
@@ -1304,7 +1402,7 @@ async function renderUserDetail() {
         <div class="detail-field">
           <div class="detail-field-label">Role</div>
           <div class="detail-field-value">
-            <span class="badge ${user.role === 'Admin' ? 'badge-admin' : user.role === 'Viewer' ? 'badge-viewer' : 'badge-user'}">
+            <span class="badge ${user.role === "Admin" ? "badge-admin" : user.role === "Viewer" ? "badge-viewer" : "badge-user"}">
               ${user.role}
             </span>
           </div>
@@ -1312,7 +1410,7 @@ async function renderUserDetail() {
         <div class="detail-field">
           <div class="detail-field-label">Trạng thái</div>
           <div class="detail-field-value">
-            <span class="badge ${user.isActive ? 'badge-active' : 'badge-locked'}">
+            <span class="badge ${user.isActive ? "badge-active" : "badge-locked"}">
               ${user.isActive ? '<i class="fa-solid fa-circle-check"></i> Hoạt động' : '<i class="fa-regular fa-circle-xmark"></i> Bị khóa'}
             </span>
           </div>
@@ -1324,12 +1422,20 @@ async function renderUserDetail() {
       </div>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        ${AuthManager.canEdit(userId) ? `
+        ${
+          AuthManager.canEdit(userId)
+            ? `
           <button onclick="Router.redirect('/user/${userId}/edit')" class="btn btn-primary"><i class="fa-solid fa-pen-to-square"></i> Sửa thông tin</button>
-        ` : ""}
-        ${AuthManager.isAdmin() && userId !== AuthManager.getUser().id ? `
+        `
+            : ""
+        }
+        ${
+          AuthManager.isAdmin() && userId !== AuthManager.getUser().id
+            ? `
           <button onclick="deleteUserConfirm(${userId})" class="btn btn-danger"><i class="fa-solid fa-trash"></i> Xóa người dùng</button>
-        ` : ""}
+        `
+            : ""
+        }
       </div>
     `;
 
@@ -1379,19 +1485,20 @@ async function renderEditUser() {
         <form id="editForm">
           <div class="form-group">
             <label class="form-label">Tên đăng nhập</label>
-            <input type="text" id="editUsername" value="${user.username}" required class="form-input">
+            <input type="text" id="editUsername" value="${user.username}" required class="form-input" minlength="3" maxlength="50">
           </div>
           <div class="form-group">
             <label class="form-label">Email</label>
             <input type="email" id="editEmail" value="${user.email}" required class="form-input">
           </div>
           <div class="form-group">
-            <label class="form-label">Số điện thoại</label>
+            <label class="form-label">Số điện thoại (10-15 ký tự, bắt đầu bằng + hoặc số)</label>
             <input type="tel" id="editPhone" value="${user.phone}" required class="form-input">
+            <small id="editPhoneError" style="color:var(--red);font-size:12px;margin-top:4px;display:none">Số điện thoại phải có 10-15 chữ số và bắt đầu bằng + hoặc số</small>
           </div>
           <div class="form-group">
             <label class="form-label">Mật khẩu mới <span style="color:var(--text-dim);text-transform:none;font-weight:400">(để trống nếu không đổi)</span></label>
-            <input type="password" id="editPassword" placeholder="••••••••" class="form-input">
+            <input type="password" id="editPassword" placeholder="••••••••" class="form-input" minlength="6" maxlength="100">
           </div>
 
           <div id="editError" class="alert alert-error" style="display:none;margin-bottom:14px"></div>
@@ -1407,27 +1514,78 @@ async function renderEditUser() {
 
     document.getElementById("editFormContainer").innerHTML = html;
 
-    document.getElementById("editForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const username = document.getElementById("editUsername").value;
-      const email = document.getElementById("editEmail").value;
-      const phone = document.getElementById("editPhone").value;
-      const password = document.getElementById("editPassword").value;
-      const errorDiv = document.getElementById("editError");
-      const successDiv = document.getElementById("editSuccess");
+    // Phone validation function
+    const validatePhoneFormat = (phone) => {
+      const phoneRegex = /^[\+]?[0-9]+$/;
+      const cleanPhone = phone.replace(/\s/g, "");
+      return (
+        phoneRegex.test(cleanPhone) &&
+        cleanPhone.length >= 10 &&
+        cleanPhone.length <= 15
+      );
+    };
 
-      try {
-        await ApiClient.updateUser(userId, username, email, phone, password || user.password);
-        successDiv.textContent = "Cập nhật thành công!";
-        successDiv.style.display = "block";
-        errorDiv.style.display = "none";
-        setTimeout(() => Router.redirect("/user/" + userId), 1500);
-      } catch (error) {
-        errorDiv.textContent = "Lỗi: " + error.message;
-        errorDiv.style.display = "block";
-        successDiv.style.display = "none";
+    const editPhoneInput = document.getElementById("editPhone");
+    const editPhoneError = document.getElementById("editPhoneError");
+
+    // Real-time phone validation
+    editPhoneInput.addEventListener("input", () => {
+      if (editPhoneInput.value && !validatePhoneFormat(editPhoneInput.value)) {
+        editPhoneError.style.display = "block";
+      } else {
+        editPhoneError.style.display = "none";
       }
     });
+
+    document
+      .getElementById("editForm")
+      .addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const username = document.getElementById("editUsername").value;
+        const email = document.getElementById("editEmail").value;
+        const phone = document.getElementById("editPhone").value;
+        const password = document.getElementById("editPassword").value;
+        const errorDiv = document.getElementById("editError");
+        const successDiv = document.getElementById("editSuccess");
+
+        // Validate all fields client-side before submit
+        if (!username || username.length < 3 || username.length > 50) {
+          errorDiv.textContent = "Tên đăng nhập phải có 3-50 ký tự";
+          errorDiv.style.display = "block";
+          return;
+        }
+
+        if (!email) {
+          errorDiv.textContent = "Email không được để trống";
+          errorDiv.style.display = "block";
+          return;
+        }
+
+        if (!validatePhoneFormat(phone)) {
+          errorDiv.textContent =
+            "Số điện thoại phải có 10-15 chữ số và bắt đầu bằng + hoặc số";
+          errorDiv.style.display = "block";
+          return;
+        }
+
+        if (password && (password.length < 6 || password.length > 100)) {
+          errorDiv.textContent = "Mật khẩu phải có 6-100 ký tự";
+          errorDiv.style.display = "block";
+          return;
+        }
+
+        try {
+          await ApiClient.updateUser(userId, username, email, phone, password);
+          successDiv.textContent = "Cập nhật thành công!";
+          successDiv.style.display = "block";
+          errorDiv.style.display = "none";
+          setTimeout(() => Router.redirect("/user/" + userId), 1500);
+        } catch (error) {
+          errorDiv.textContent = "Lỗi: " + error.message;
+          errorDiv.style.display = "block";
+          successDiv.style.display = "none";
+        }
+      });
   } catch (error) {
     document.getElementById("editFormContainer").innerHTML = `
       <div class="alert alert-error">Lỗi: ${error.message}</div>
@@ -1442,20 +1600,46 @@ function renderSidebar(activeRoute) {
   const hash = window.location.hash;
 
   const navItems = [
-    { key: "home", icon: '<i class="fa-solid fa-house"></i>', label: "Tổng quan", href: "#/" },
-    { key: "dashboard", icon: '<i class="fa-solid fa-table-list"></i>', label: "Người dùng", href: "#/dashboard" },
-    { key: "profile", icon: '<i class="fa-solid fa-id-card"></i>', label: "Profile", href: "#/profile" },
+    {
+      key: "home",
+      icon: '<i class="fa-solid fa-house"></i>',
+      label: "Tổng quan",
+      href: "#/",
+    },
+    {
+      key: "dashboard",
+      icon: '<i class="fa-solid fa-table-list"></i>',
+      label: "Người dùng",
+      href: "#/dashboard",
+    },
+    {
+      key: "profile",
+      icon: '<i class="fa-solid fa-id-card"></i>',
+      label: "Profile",
+      href: "#/profile",
+    },
   ];
   if (isAdmin) {
-    navItems.push({ key: "masking", icon: '<i class="fa-solid fa-shield-halved"></i>', label: "Masking Config", href: "#/admin/masking-config" });
+    navItems.push({
+      key: "masking",
+      icon: '<i class="fa-solid fa-shield-halved"></i>',
+      label: "Masking Config",
+      href: "#/admin/masking-config",
+    });
   }
 
-  const currentActive = hash === "#/" || hash === "" ? "home"
-    : hash.startsWith("#/dashboard") ? "dashboard"
-    : hash.startsWith("#/profile") || hash.includes("/edit") ? "profile"
-    : hash.startsWith("#/admin") ? "masking"
-    : hash.startsWith("#/user") ? "dashboard"
-    : "home";
+  const currentActive =
+    hash === "#/" || hash === ""
+      ? "home"
+      : hash.startsWith("#/dashboard")
+        ? "dashboard"
+        : hash.startsWith("#/profile") || hash.includes("/edit")
+          ? "profile"
+          : hash.startsWith("#/admin")
+            ? "masking"
+            : hash.startsWith("#/user")
+              ? "dashboard"
+              : "home";
 
   return `
     <aside class="sidebar">
@@ -1469,17 +1653,21 @@ function renderSidebar(activeRoute) {
 
       <nav class="sidebar-nav">
         <div class="nav-section-label">Menu</div>
-        ${navItems.map(item => `
-          <a href="${item.href}" class="nav-item ${currentActive === item.key ? 'active' : ''}">
+        ${navItems
+          .map(
+            (item) => `
+          <a href="${item.href}" class="nav-item ${currentActive === item.key ? "active" : ""}">
             <span class="nav-item-icon">${item.icon}</span>
             ${item.label}
           </a>
-        `).join("")}
+        `,
+          )
+          .join("")}
       </nav>
 
       <div class="sidebar-footer">
         ${renderRuntimeBadge()}
-        <div class="user-info-bar" style="margin-top:${renderRuntimeBadge() ? '8px' : '0'}">
+        <div class="user-info-bar" style="margin-top:${renderRuntimeBadge() ? "8px" : "0"}">
           <div class="user-avatar">${user.username.charAt(0).toUpperCase()}</div>
           <div style="flex:1;min-width:0">
             <div class="user-name-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${user.username}</div>
@@ -1538,10 +1726,10 @@ async function renderProfile() {
               <div style="min-width:0">
                 <div style="font-size:20px;font-weight:700;color:var(--text);line-height:1.25">${profileUser.username}</div>
                 <div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <span class="badge ${profileUser.role === 'Admin' ? 'badge-admin' : profileUser.role === 'Viewer' ? 'badge-viewer' : 'badge-user'}">
+                  <span class="badge ${profileUser.role === "Admin" ? "badge-admin" : profileUser.role === "Viewer" ? "badge-viewer" : "badge-user"}">
                     ${profileUser.role}
                   </span>
-                  <span class="badge ${profileUser.isActive ? 'badge-active' : 'badge-locked'}">
+                  <span class="badge ${profileUser.isActive ? "badge-active" : "badge-locked"}">
                     ${profileUser.isActive ? '<i class="fa-solid fa-circle-check"></i> Hoạt động' : '<i class="fa-regular fa-circle-xmark"></i> Bị khóa'}
                   </span>
                 </div>
@@ -1715,7 +1903,7 @@ async function renderAdminMaskingConfig() {
         <div class="detail-grid">
           <div class="detail-field">
             <div class="detail-field-label">Trạng thái</div>
-            <div class="detail-field-value" style="color:${currentConfig.enabled ? 'var(--green)' : 'var(--red)'}">
+            <div class="detail-field-value" style="color:${currentConfig.enabled ? "var(--green)" : "var(--red)"}">
               ${currentConfig.enabled ? '<i class="fa-solid fa-circle-check"></i> Đang bật' : '<i class="fa-regular fa-circle-xmark"></i> Đang tắt'}
             </div>
           </div>
@@ -1754,11 +1942,15 @@ async function renderAdminMaskingConfig() {
             <div class="form-group">
               <label class="form-label">Chọn phương pháp Masking</label>
               <select id="algorithmSelect" class="form-select">
-                ${algorithms.map((algo) => `
+                ${algorithms
+                  .map(
+                    (algo) => `
                   <option value="${algo.id}" ${algo.id === currentConfig.algorithm ? "selected" : ""}>
                     ${algo.name} — ${algo.description}
                   </option>
-                `).join("")}
+                `,
+                  )
+                  .join("")}
               </select>
             </div>
             <div style="display:flex;gap:10px">
@@ -1772,12 +1964,16 @@ async function renderAdminMaskingConfig() {
         <div class="card" style="height:100%">
           <div class="card-title"><i class="fa-solid fa-list-check"></i> Danh sách phương pháp</div>
           <div style="display:grid;grid-template-columns:1fr;gap:10px">
-            ${algorithms.map((algo) => `
+            ${algorithms
+              .map(
+                (algo) => `
               <div class="algo-card">
                 <div class="algo-card-name">${algo.id}. ${algo.name}</div>
                 <div class="algo-card-desc">${algo.description}</div>
               </div>
-            `).join("")}
+            `,
+              )
+              .join("")}
           </div>
         </div>
       </div>
@@ -1786,20 +1982,24 @@ async function renderAdminMaskingConfig() {
     document.getElementById("loadingSpinner").style.display = "none";
     document.getElementById("configContainer").innerHTML = html;
 
-    document.getElementById("configForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const enabled = document.getElementById("enabledToggle").checked;
-      const algorithm = parseInt(document.getElementById("algorithmSelect").value);
-      const messageDiv = document.getElementById("updateMessage");
+    document
+      .getElementById("configForm")
+      .addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const enabled = document.getElementById("enabledToggle").checked;
+        const algorithm = parseInt(
+          document.getElementById("algorithmSelect").value,
+        );
+        const messageDiv = document.getElementById("updateMessage");
 
-      try {
-        await ApiClient.updateMaskingConfig(enabled, algorithm);
-        messageDiv.innerHTML = `<div class="alert alert-success" style="margin-top:14px"><i class="fa-solid fa-circle-check"></i> Cập nhật cấu hình thành công!</div>`;
-        setTimeout(() => renderAdminMaskingConfig(), 2000);
-      } catch (error) {
-        messageDiv.innerHTML = `<div class="alert alert-error" style="margin-top:14px"><i class="fa-solid fa-circle-xmark"></i> Lỗi: ${error.message}</div>`;
-      }
-    });
+        try {
+          await ApiClient.updateMaskingConfig(enabled, algorithm);
+          messageDiv.innerHTML = `<div class="alert alert-success" style="margin-top:14px"><i class="fa-solid fa-circle-check"></i> Cập nhật cấu hình thành công!</div>`;
+          setTimeout(() => renderAdminMaskingConfig(), 2000);
+        } catch (error) {
+          messageDiv.innerHTML = `<div class="alert alert-error" style="margin-top:14px"><i class="fa-solid fa-circle-xmark"></i> Lỗi: ${error.message}</div>`;
+        }
+      });
   } catch (error) {
     document.getElementById("loadingSpinner").style.display = "none";
     document.getElementById("configContainer").innerHTML = `

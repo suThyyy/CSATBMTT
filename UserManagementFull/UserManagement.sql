@@ -23,6 +23,7 @@ CREATE TABLE Users (
     EncryptedEmail VARBINARY(MAX),
     EncryptedPhone VARBINARY(MAX),
     EncryptedPassword VARBINARY(MAX),
+    EmailHash NVARCHAR(256) UNIQUE,
     [Key] INT NOT NULL,
     RoleId INT NOT NULL DEFAULT 2,
     IsActive BIT NOT NULL DEFAULT 1,

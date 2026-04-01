@@ -64,6 +64,11 @@ public class UserService : IUserService
         if (await _userRepository.UsernameExists(request.Username))
             return ApiResponse<UserResponse>.Fail("Username đã tồn tại");
 
+        // Kiểm tra email trùng bằng hash email (không phụ thuộc vào user key)
+        var emailHash = _securityService.GetEmailHash(request.Email);
+        if (await _userRepository.EmailExists(emailHash))
+            return ApiResponse<UserResponse>.Fail("Email đã được sử dụng");
+
         var userKey = _securityService.GenerateUserKey();
         var hashedPassword = _securityService.HashPassword(request.Password);
 
@@ -73,6 +78,7 @@ public class UserService : IUserService
             EncryptedEmail = _securityService.Encrypt(request.Email, userKey),
             EncryptedPhone = _securityService.Encrypt(request.Phone, userKey),
             EncryptedPassword = _securityService.Encrypt(hashedPassword, userKey),
+            EmailHash = emailHash,
             Key = userKey,
             RoleId = 2,
             CreatedAt = DateTime.UtcNow,
@@ -133,16 +139,30 @@ public class UserService : IUserService
         int newKey = existing.Key;
         string newPasswordHash = oldPasswordHash;
 
-        if (!_securityService.VerifyPassword(request.Password, oldPasswordHash))
+        // Only update password if it's provided and not empty
+        if (!string.IsNullOrWhiteSpace(request.Password))
         {
-            newKey = _securityService.GenerateUserKey();
-            newPasswordHash = _securityService.HashPassword(request.Password);
+            if (!_securityService.VerifyPassword(request.Password, oldPasswordHash))
+            {
+                newKey = _securityService.GenerateUserKey();
+                newPasswordHash = _securityService.HashPassword(request.Password);
+            }
+        }
+
+        // Kiểm tra email trùng khi update bằng email hash
+        var newEmailHash = _securityService.GetEmailHash(request.Email);
+        if (existing.EmailHash != newEmailHash)
+        {
+            // Email đã thay đổi, check xem email mới có bị dùng không
+            if (await _userRepository.EmailExists(newEmailHash, id))
+                return ApiResponse<string>.Fail("Email đã được sử dụng");
         }
 
         existing.Username = request.Username;
         existing.EncryptedEmail = _securityService.Encrypt(request.Email, newKey);
         existing.EncryptedPhone = _securityService.Encrypt(request.Phone, newKey);
         existing.EncryptedPassword = _securityService.Encrypt(newPasswordHash, newKey);
+        existing.EmailHash = newEmailHash;
         existing.Key = newKey;
         existing.UpdatedAt = DateTime.UtcNow;
 

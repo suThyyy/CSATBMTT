@@ -64,6 +64,42 @@ http-server
 
 ---
 
+## 📴 Chạy Không Cần Backend (Offline Mock Mode)
+
+Khi không kết nối được server nội bộ, frontend vẫn có thể chạy toàn bộ màn hình bằng dữ liệu giả lập.
+
+### Cách bật nhanh
+
+Trong [js/config.js](js/config.js), đảm bảo các giá trị sau:
+
+```javascript
+USE_MOCK_API: true,
+AUTO_FALLBACK_TO_MOCK: true,
+```
+
+- `USE_MOCK_API: true`: luôn dùng mock API.
+- `AUTO_FALLBACK_TO_MOCK: true`: nếu gọi backend lỗi mạng thì tự chuyển sang mock.
+
+### Tài khoản test sẵn
+
+- Admin: `admin` / `admin123`
+- User: `john_doe` / `123456`
+- Viewer: `viewer_anna` / `123456`
+
+### Dữ liệu mock hỗ trợ
+
+- Đăng nhập, đăng ký
+- Danh sách users + phân trang
+- Xem/sửa/xóa user
+- Khóa/mở khóa user
+- Nâng cấp role User -> Viewer
+- Profile cá nhân
+- Cấu hình masking + demo masking
+
+Mock data được lưu bằng `localStorage`, nên bạn có thể test giao diện đầy đủ như khi có backend.
+
+---
+
 ## 📄 File Config (config.js)
 
 ```javascript

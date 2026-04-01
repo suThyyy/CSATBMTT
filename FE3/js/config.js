@@ -4,6 +4,11 @@ const API_CONFIG = {
   TOKEN_KEY: "auth_token",
   USER_KEY: "current_user",
   ROLE_KEY: "user_role",
+  // mock disabled: always use backend API
+  USE_MOCK_API: false,
+  AUTO_FALLBACK_TO_MOCK: false,
+  MOCK_MODE_KEY: "use_mock_api",
+  MOCK_DB_KEY: "mock_user_management_db",
 };
 
 // Cấu hình role
